@@ -39,9 +39,9 @@ class User
   end
 
   def initialize(options = {})
-    @id = options['id']
     @fname = options['fname']
     @lname = options['lname']
+    @id = options['id']
   end
 
   def authored_questions
@@ -50,6 +50,49 @@ class User
 
   def authored_replies
     Reply.find_by_reply_author_id(self.id)
+  end
+
+  def followed_questions
+    QuestionFollower.followed_questions_for_user_id(self.id)
+  end
+
+  def average_karma
+    result = QuestionsDatabase.instance.execute(<<-SQL, self.id)
+    SELECT
+      ( CAST(COUNT(question_likes.id) AS FLOAT) /
+        COUNT(DISTINCT(questions.id)) ) AS karma
+    FROM
+      questions LEFT OUTER JOIN question_likes
+      ON questions.id = question_id
+    WHERE
+      author_id = (?)
+    GROUP BY
+      author_id
+    SQL
+    result[0]['karma']
+  end
+
+  def save
+    if id.nil?
+      QuestionsDatabase.instance.execute(<<-SQL, fname, lname)
+      INSERT INTO
+        users(fname, lname)
+      VALUES
+        ((?), (?))
+       SQL
+
+       @id = QuestionsDatabase.instance.last_insert_row_id
+    else
+      QuestionsDatabase.instance.execute(<<-SQL, fname, lname, id)
+      UPDATE
+        users
+      SET
+        fname = (?), lname = (?)
+      WHERE
+        id = (?)
+      SQL
+    end
+    nil
   end
 
 end
@@ -81,6 +124,14 @@ class Question
     results.map { |result| self.new(result) }
   end
 
+  def self.most_followed(n)
+    QuestionFollowers.most_followed_questions(n)
+  end
+
+  def self.most_liked(n)
+    QuestionLike.most_liked_questions(n)
+  end
+
   def initialize(options = {})
     @id = options['id']
     @title = options['title']
@@ -94,6 +145,41 @@ class Question
 
   def replies
     Reply.find_by_question_id(self.id)
+  end
+
+  def followers
+    QuestionFollower.followers_for_question_id(self.id)
+  end
+
+  def likers
+    QuestionLike.likers_for_question_id(self.id)
+  end
+
+  def num_likes
+    QuestionLike.num_likes_for_question_id(self.id)
+  end
+
+  def save
+    if id.nil?
+      QuestionsDatabase.instance.execute(<<-SQL, title, body, author_id)
+      INSERT INTO
+        questions(title, body, author_id)
+      VALUES
+        ((?), (?), (?))
+       SQL
+
+       @id = QuestionsDatabase.instance.last_insert_row_id
+    else
+      QuestionsDatabase.instance.execute(<<-SQL, title, body, author_id, id)
+      UPDATE
+        questions
+      SET
+        title = (?), body = (?), author_id = (?)
+      WHERE
+        id = (?)
+      SQL
+    end
+    nil
   end
 
 end
@@ -116,20 +202,69 @@ class QuestionFollower
   def self.followers_for_question_id(question_id)
     results = QuestionsDatabase.instance.execute(<<-SQL, question_id)
     SELECT
-      follower_id
+      users.*
     FROM
-      question_followers
+      question_followers JOIN users ON follower_id = users.id
     WHERE
       question_id = (?)
     SQL
-    results
-    #results.map { |result| User.find_by_id(result.value) }
+    results.map { |result| User.new(result) }
+  end
+
+  def self.followed_questions_for_user_id(user_id)
+    results = QuestionsDatabase.instance.execute(<<-SQL, user_id)
+    SELECT
+      questions.*
+    FROM
+      question_followers JOIN questions ON questions.id = question_id
+    WHERE
+      follower_id = (?)
+    SQL
+    results.map { |result| Question.new(result) }
+  end
+
+  def self.most_followed_questions(n)
+    result = QuestionsDatabase.instance.execute(<<-SQL, n)
+    SELECT
+      questions.*, COUNT(*) AS followers
+    FROM
+      question_followers JOIN questions ON questions.id = question_id
+    GROUP BY
+      questions.id
+    ORDER BY
+      followers
+    LIMIT (?);
+    SQL
+    result.map { |result| Question.new(result) }
   end
 
   def initialize(options = {})
     @id = options['id']
     @follower_id = options['follower_id']
     @question_id = options['question_id']
+  end
+
+  def save
+    if id.nil?
+      QuestionsDatabase.instance.execute(<<-SQL, follower_id, question_id)
+      INSERT INTO
+        question_followers(follower_id, question_id)
+      VALUES
+        ((?), (?))
+       SQL
+
+       @id = QuestionsDatabase.instance.last_insert_row_id
+    else
+      QuestionsDatabase.instance.execute(<<-SQL, follower_id, question_id, id)
+      UPDATE
+        question_followers
+      SET
+        follower_id = (?), question_id = (?)
+      WHERE
+        id = (?)
+      SQL
+    end
+    nil
   end
 
 end
@@ -149,10 +284,88 @@ class QuestionLike
     self.new(results[0])
   end
 
+  def self.likers_for_question_id(question_id)
+    results = QuestionsDatabase.instance.execute(<<-SQL, question_id)
+    SELECT
+      users.*
+    FROM
+      question_likes JOIN users ON user_id = user.id
+    WHERE
+      question_id = (?)
+    SQL
+    results.map { |result| User.new(result) }
+  end
+
+  def self.num_likes_for_question_id(question_id)
+    results = QuestionsDatabase.instance.execute(<<-SQL, question_id)
+    SELECT
+      COUNT(question_id) num_likes
+    FROM
+      question_likes
+    WHERE
+      question_id = (?)
+    GROUP BY
+      question_id
+    SQL
+    results[0]['num_likes']
+  end
+
+  def self.liked_questions_for_user_id(user_id)
+    results = QuestionsDatabase.instance.execute(<<-SQL, user_id)
+    SELECT
+      questions.*
+    FROM
+      question_likes JOIN questions ON question_id = questions.id
+    WHERE
+      user_id = (?)
+    SQL
+    results.map { |result| Question.new(result) }
+  end
+
+  def self.most_liked_questions(n)
+    result = QuestionsDatabase.instance.execute(<<-SQL, n)
+    SELECT
+      questions.*
+    FROM
+      question_likes JOIN questions ON question_id = questions.id
+    GROUP BY
+      question_id
+    ORDER BY
+      COUNT(*)
+    LIMIT (?);
+
+    SQL
+
+    result.map { |result| Question.new(result) }
+  end
+
   def initialize(options = {})
     @id = options['id']
     @question_id = options['question_id']
     @user_id = options['user_id']
+  end
+
+  def save
+    if id.nil?
+      QuestionsDatabase.instance.execute(<<-SQL, question_id, user_id)
+      INSERT INTO
+        question_likes(question_id, user_id)
+      VALUES
+        ((?), (?))
+       SQL
+
+       @id = QuestionsDatabase.instance.last_insert_row_id
+    else
+      QuestionsDatabase.instance.execute(<<-SQL, question_id, user_id, id)
+      UPDATE
+        question_likes
+      SET
+        question_id = (?), user_id = (?)
+      WHERE
+        id = (?)
+      SQL
+    end
+    nil
   end
 
 end
@@ -232,6 +445,32 @@ class Reply
 
   def child_replies
     Reply.find_by_parent_id(self.id)
+  end
+
+  def save
+    if id.nil?
+      QuestionsDatabase.instance.execute(
+      <<-SQL, subject_question_id, parent_id, reply_author_id, body)
+      INSERT INTO
+        replies(subject_question_id, parent_reply, reply_author_id, body)
+      VALUES
+        ((?), (?), (?), (?))
+       SQL
+
+       @id = QuestionsDatabase.instance.last_insert_row_id
+    else
+      QuestionsDatabase.instance.execute(
+      <<-SQL, subject_question_id, parent_id, reply_author_id, body, id)
+      UPDATE
+        replies
+      SET
+        subject_question_id = (?), parent_reply = (?),
+        reply_author_id = (?), body = (?)
+      WHERE
+        id = (?)
+      SQL
+    end
+    nil
   end
 
 end
