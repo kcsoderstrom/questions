@@ -1,5 +1,6 @@
 require 'singleton'
 require 'sqlite3'
+require_relative 'saveable'
 
 class QuestionsDatabase < SQLite3::Database
   include Singleton
@@ -12,6 +13,7 @@ class QuestionsDatabase < SQLite3::Database
 end
 
 class User
+  include Saveable
   attr_accessor :id, :fname, :lname
 
   def self.find_by_id(id)
@@ -39,9 +41,9 @@ class User
   end
 
   def initialize(options = {})
+    @id = options['id']
     @fname = options['fname']
     @lname = options['lname']
-    @id = options['id']
   end
 
   def authored_questions
@@ -72,33 +74,20 @@ class User
     result[0]['karma']
   end
 
-  def save
-    if id.nil?
-      QuestionsDatabase.instance.execute(<<-SQL, fname, lname)
-      INSERT INTO
-        users(fname, lname)
-      VALUES
-        ((?), (?))
-       SQL
-
-       @id = QuestionsDatabase.instance.last_insert_row_id
-    else
-      QuestionsDatabase.instance.execute(<<-SQL, fname, lname, id)
-      UPDATE
-        users
-      SET
-        fname = (?), lname = (?)
-      WHERE
-        id = (?)
-      SQL
-    end
-    nil
-  end
-
 end
 
 class Question
+  include Saveable
   attr_accessor :id, :title, :body, :author_id
+
+  def self.all_questions
+    QuestionsDatabase.instance.execute(<<-SQL)
+    SELECT
+      title, fname, lname
+    FROM
+      questions JOIN users ON author_id=users.id
+    SQL
+  end
 
   def self.find_by_id(id)
     results = QuestionsDatabase.instance.execute(<<-SQL, id)
@@ -159,32 +148,15 @@ class Question
     QuestionLike.num_likes_for_question_id(self.id)
   end
 
-  def save
-    if id.nil?
-      QuestionsDatabase.instance.execute(<<-SQL, title, body, author_id)
-      INSERT INTO
-        questions(title, body, author_id)
-      VALUES
-        ((?), (?), (?))
-       SQL
-
-       @id = QuestionsDatabase.instance.last_insert_row_id
-    else
-      QuestionsDatabase.instance.execute(<<-SQL, title, body, author_id, id)
-      UPDATE
-        questions
-      SET
-        title = (?), body = (?), author_id = (?)
-      WHERE
-        id = (?)
-      SQL
-    end
-    nil
+  def render(question)
+    "Title: #{question.title} \tAuthor: #{question.author.fname + ' ' + question.author.lname}\n\n
+    #{question.body}\n"
   end
 
 end
 
 class QuestionFollower
+  include Saveable
   attr_accessor :id, :follower_id, :question_id
 
   def self.find_by_id(id)
@@ -216,7 +188,8 @@ class QuestionFollower
     SELECT
       questions.*
     FROM
-      question_followers JOIN questions ON questions.id = question_id
+      question_followers
+    JOIN questions ON questions.id = question_id
     WHERE
       follower_id = (?)
     SQL
@@ -244,32 +217,10 @@ class QuestionFollower
     @question_id = options['question_id']
   end
 
-  def save
-    if id.nil?
-      QuestionsDatabase.instance.execute(<<-SQL, follower_id, question_id)
-      INSERT INTO
-        question_followers(follower_id, question_id)
-      VALUES
-        ((?), (?))
-       SQL
-
-       @id = QuestionsDatabase.instance.last_insert_row_id
-    else
-      QuestionsDatabase.instance.execute(<<-SQL, follower_id, question_id, id)
-      UPDATE
-        question_followers
-      SET
-        follower_id = (?), question_id = (?)
-      WHERE
-        id = (?)
-      SQL
-    end
-    nil
-  end
-
 end
 
 class QuestionLike
+  include Saveable
   attr_accessor :id, :question_id, :user_id
 
   def self.find_by_id(id)
@@ -345,33 +296,11 @@ class QuestionLike
     @user_id = options['user_id']
   end
 
-  def save
-    if id.nil?
-      QuestionsDatabase.instance.execute(<<-SQL, question_id, user_id)
-      INSERT INTO
-        question_likes(question_id, user_id)
-      VALUES
-        ((?), (?))
-       SQL
-
-       @id = QuestionsDatabase.instance.last_insert_row_id
-    else
-      QuestionsDatabase.instance.execute(<<-SQL, question_id, user_id, id)
-      UPDATE
-        question_likes
-      SET
-        question_id = (?), user_id = (?)
-      WHERE
-        id = (?)
-      SQL
-    end
-    nil
-  end
-
 end
 
 class Reply
-  attr_accessor :id, :subject_question_id, :parent_id,    # name no match
+  include Saveable
+  attr_accessor :id, :subject_question_id, :parent_reply,
                 :reply_author_id, :body
 
   def self.find_by_id(id)
@@ -425,7 +354,7 @@ class Reply
   def initialize(options = {})
     @id = options['id']
     @subject_question_id = options['subject_question_id']
-    @parent_id = options['parent_reply']        # names don't match WARNING!!
+    @parent_reply = options['parent_reply']
     @reply_author_id = options['reply_author_id']
     @body = options['body']
   end
@@ -439,38 +368,12 @@ class Reply
   end
 
   def parent_reply
-    return [] if parent_id.nil?
-    Reply.find_by_id(self.parent_id) # may have to handle parent = nil
+    return [] if parent_reply.nil?
+    Reply.find_by_id(self.parent_reply)
   end
 
   def child_replies
     Reply.find_by_parent_id(self.id)
-  end
-
-  def save
-    if id.nil?
-      QuestionsDatabase.instance.execute(
-      <<-SQL, subject_question_id, parent_id, reply_author_id, body)
-      INSERT INTO
-        replies(subject_question_id, parent_reply, reply_author_id, body)
-      VALUES
-        ((?), (?), (?), (?))
-       SQL
-
-       @id = QuestionsDatabase.instance.last_insert_row_id
-    else
-      QuestionsDatabase.instance.execute(
-      <<-SQL, subject_question_id, parent_id, reply_author_id, body, id)
-      UPDATE
-        replies
-      SET
-        subject_question_id = (?), parent_reply = (?),
-        reply_author_id = (?), body = (?)
-      WHERE
-        id = (?)
-      SQL
-    end
-    nil
   end
 
 end
