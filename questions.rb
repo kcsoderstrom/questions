@@ -81,7 +81,7 @@ class Question
   attr_accessor :id, :title, :body, :author_id
 
   def self.all_questions
-    QuestionsDatabase.instance.execute(<<-SQL)
+    results = QuestionsDatabase.instance.execute(<<-SQL)
     SELECT
       title, fname, lname
     FROM
