@@ -50,7 +50,7 @@ class TopicsTable < DisplayTable
     SQL
     @rows = results.map do |data|
       [Question.find_by_id(data['question_id']),
-        User.find_by_id(data['author_id'])]
+        User.find_by_id(data['author_id'])] # do this with queries
     end
   end
 
@@ -90,7 +90,6 @@ class RepliesTable < DisplayTable
   end
 
   def populate_rows
-    #this should give us the question and author, then the replies and their authors. also the likes. maybe followers.
     results = QuestionsDatabase.instance.execute(<<-SQL, @question.id)
     SELECT
       replies.id AS reply_id,
@@ -108,7 +107,7 @@ class RepliesTable < DisplayTable
     SQL
     results
     @rows = results.map do |data|
-      [Reply.find_by_id(data['reply_id']),
+      [Reply.find_by_id(data['reply_id']),    # do this with queries
         User.find_by_id(data['reply_author_id'])]
     end
   end
